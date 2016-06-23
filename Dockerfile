@@ -16,7 +16,9 @@ RUN dnf -y install \
  && dnf clean all
 
 # Disable unneeded services
-RUN ["/bin/sh", "-c", "set -xe; for s in dnf-makecache systemd-udevd dbus; do systemctl disable $s; done"]
+RUN ["/usr/bin/rm", "-f", \
+     "/etc/systemd/system/basic.target.wants/dnf-makecache.timer", \
+     "/etc/systemd/system/getty.target.wants/getty@tty1.service"]
 
 # Disable any getty spawning
 RUN ["/bin/sh", "-c", "echo -e NAutoVTs=0\\\\nReserveVT=0 >> /etc/systemd/logind.conf"]
