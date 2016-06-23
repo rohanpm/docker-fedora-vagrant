@@ -18,6 +18,9 @@ RUN dnf -y install \
 # Disable unneeded services
 RUN ["/bin/sh", "-c", "set -xe; for s in dnf-makecache systemd-udevd dbus; do systemctl disable $s; done"]
 
+# Disable any getty spawning
+RUN ["/bin/sh", "-c", "echo -e NAutoVTs=0\\\\nReserveVT=0 >> /etc/systemd/logind.conf"]
+
 # These changes are explained here:
 # https://www.vagrantup.com/docs/boxes/base.html
 
