@@ -51,4 +51,6 @@ USER root
 
 VOLUME /var/log
 
+ENV container=docker
+
 CMD ["/sbin/init"]
