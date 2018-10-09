@@ -1,4 +1,4 @@
-FROM fedora:latest
+FROM fedora:heisenbug
 
 # This image should be kept to the minimal requirements for vagrant
 # to be able to ssh into the container and run provisioners.
