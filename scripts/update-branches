@@ -1,0 +1,145 @@
+#!/usr/bin/env python
+"""Create branches in this repo for whichever tags exist in upstream fedora image."""
+from __future__ import print_function
+
+from argparse import ArgumentParser
+import json
+import subprocess
+from subprocess import check_call
+import requests
+import sys
+import os
+import tempfile
+import shutil
+import atexit
+
+
+UPSTREAM_IMAGE_BASENAME = 'fedora'
+UPSTREAM_TAGS_URL = 'https://registry-1.docker.io/v2/library/%s/tags/list' % UPSTREAM_IMAGE_BASENAME
+
+TAG_BLACKLIST = [
+    'latest',  # this comes from master
+
+    # these are too old
+    '20',
+    '21',
+]
+
+def get_token(session, authenticate):
+    # Example string:
+    # realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:library/fedora:pull"
+    # Not sure exactly how it's supposed to be parsed.
+    assert authenticate.startswith('Bearer ')
+
+    requested_params = {}
+    kv_str = authenticate[len('Bearer '):].split(',')
+    kv = [item.split('=', 1) for item in kv_str]
+    for key, value_str in kv:
+        value = json.loads(value_str)
+        requested_params[key] = value
+
+    assert 'realm' in requested_params
+
+    params={}
+    for key in ('service', 'scope'):
+        if key in requested_params:
+            params[key] = requested_params[key]
+
+    response = session.get(requested_params['realm'], params=params)
+    return response.json()['token']
+
+
+def upstream_tags():
+    print("Querying tags from upstream...")
+    session = requests.Session()
+    response = session.get(UPSTREAM_TAGS_URL)
+
+    if response.status_code == 401 \
+            and response.headers.get('WWW-Authenticate', '').startswith('Bearer '):
+        token = get_token(session, response.headers['WWW-Authenticate'])
+        headers = {'Authorization': 'Bearer %s' % token}
+        response = session.get(UPSTREAM_TAGS_URL, headers=headers)
+
+    response.raise_for_status()
+
+    print("Tags in upstream:", response.json())
+    return response.json()['tags']
+
+
+def setup_git_env(args):
+    tempdir = tempfile.mkdtemp('update-branches')
+    atexit.register(shutil.rmtree, tempdir, ignore_errors=True)
+
+    os.chdir(tempdir)
+    check_call(['git', 'init'])
+    check_call(['git', 'config', 'user.name', args.git_name])
+    check_call(['git', 'config', 'user.email', args.git_email])
+
+    repo_url = "https://{TOKEN}@github.com/{REPO}.git".format(
+        TOKEN=args.github_token,
+        REPO=args.github_repo)
+
+    check_call(['git', 'remote', 'add', '-f', 'origin', repo_url])
+
+
+def have_branch(branch):
+    proc = subprocess.Popen(['git', 'rev-parse', 'origin/%s' % branch],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc.communicate()
+    return proc.returncode == 0
+
+
+def create_branch(args, tag):
+    if have_branch(tag):
+        # nothing to be done
+        print("Branch %s already exists" % tag)
+        return
+
+    check_call(['git', 'checkout', 'master'])
+    check_call(['git', 'reset', '--hard', 'origin/master'])
+    check_call(['git', 'checkout', '-b', tag])
+    check_call([
+        'sed',
+        '-r',
+        '-e', 's|{image}:latest|{image}:{tag}|'.format(image=UPSTREAM_IMAGE_BASENAME, tag=tag),
+        '-i',
+        'Dockerfile'
+    ])
+    check_call(['git', 'add', 'Dockerfile'])
+    check_call(['git', 'commit', '-m', 'Introduce %s [automated commit]' % tag])
+
+    return True
+
+
+def main(raw_args):
+    parser = ArgumentParser()
+    parser.add_argument('--dry-run', action='store_true', help="Don't really push anything")
+    parser.add_argument('--git-name', default='Rohan McGovern')
+    parser.add_argument('--git-email', default='rohan@mcgovern.id.au')
+    parser.add_argument('--github-repo', default='rohanpm/docker-fedora-vagrant')
+    parser.add_argument('--github-token', default=os.environ.get('GITHUB_TOKEN'))
+
+    args = parser.parse_args(raw_args)
+
+    setup_git_env(args)
+
+    to_push = []
+    tags = upstream_tags()
+    for tag in tags:
+        if tag in TAG_BLACKLIST:
+            print("Skipping blacklisted %s" % tag)
+        elif create_branch(args, tag):
+            to_push.append(tag)
+
+    command = ['git', 'push', '-v', 'origin']
+    command.extend(to_push)
+
+    if args.dry_run:
+        print("Would now run:", *command)
+    else:
+        print("Running:", *command)
+        check_call(command)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
