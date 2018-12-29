@@ -134,7 +134,9 @@ def main(raw_args):
     command = ['git', 'push', '-v', 'origin']
     command.extend(to_push)
 
-    if args.dry_run:
+    if not to_push:
+        print("Nothing to push")
+    elif args.dry_run:
         print("Would now run:", *command)
     else:
         print("Running:", *command)
